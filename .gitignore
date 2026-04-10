@@ -1,0 +1,15 @@
+# 编译后的二进制文件
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+Echo  # 假设你编译出的 Linux 可执行文件叫 Echo
+
+# 编辑器和系统临时文件
+.idea/
+.vscode/
+.DS_Store
+
+# 真实配置文件 (绝密)
+config.yaml
