@@ -15,52 +15,81 @@ package main
 // @host 127.0.0.1:8080
 // @BasePath /api/v1
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"Echo/consumer"
 	"Echo/controller"
 	"Echo/dao/mysql"
 	"Echo/dao/redis"
 	"Echo/logger"
+	"Echo/pkg/kafka"
 	"Echo/pkg/snowflakeID"
 	"Echo/router"
 	"Echo/settings"
-	"fmt"
 
 	"go.uber.org/zap"
 )
 
 func main() {
-	// 加载配置
 	if err := settings.Init(); err != nil {
 		panic(err)
 	}
-	// 初始化日志
 	if err := logger.Init(settings.Conf.Log, settings.Conf.App.Mode); err != nil {
 		fmt.Printf("init logger failed, err:%v\n", err)
 		return
 	}
 	defer zap.L().Sync()
-	// 初始化翻译器
 	if err := controller.InitTrans("zh"); err != nil {
 		fmt.Printf("init validator trans failed, err:%v\n", err)
 		return
 	}
-	// 雪花算法生成分布式ID
 	if err := snowflakeID.Init(settings.Conf.StartTime, settings.Conf.MachineID); err != nil {
 		fmt.Printf("init snowflake failed, err:%v\n", err)
 		return
 	}
-	// 初始化数据库
 	if err := mysql.Init(settings.Conf.MySQL); err != nil {
 		fmt.Printf("init mysql failed, err:%v\n", err)
 		return
 	}
-	// 初始化redis
 	if err := redis.Init(settings.Conf.Redis); err != nil {
 		fmt.Printf("init redis failed, err:%v\n", err)
 		return
 	}
-	r := router.SetupRouter()
-	addr := fmt.Sprintf(":%d", settings.Conf.App.Port)
-	fmt.Printf("Server is running on %s\n", addr)
+	kafka.Init(settings.Conf.Kafka)
+	consumer.Start(settings.Conf.Kafka)
 
-	r.Run(addr)
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", settings.Conf.App.Port),
+		Handler: router.SetupRouter(),
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			zap.L().Fatal("服务启动失败", zap.Error(err))
+		}
+	}()
+	zap.L().Info("服务已启动", zap.String("addr", srv.Addr))
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	zap.L().Info("正在关闭服务...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		zap.L().Error("HTTP 服务关闭异常", zap.Error(err))
+	}
+	kafka.Close()
+	redis.Close()
+
+	zap.L().Info("服务已安全退出")
 }

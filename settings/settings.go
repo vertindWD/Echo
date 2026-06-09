@@ -18,6 +18,7 @@ type AppConfig struct {
 	*Redis     `mapstructure:"redis"`
 	*Snowflake `mapstructure:"snowflake"`
 	*Auth      `mapstructure:"auth"`
+	*Kafka     `mapstructure:"kafka"`
 }
 
 type App struct {
@@ -61,6 +62,11 @@ type Snowflake struct {
 type Auth struct {
 	JwtSecret string `mapstructure:"jwt_secret"`
 	JwtExpire int    `mapstructure:"jwt_expire"`
+}
+
+type Kafka struct {
+	Address string `mapstructure:"address"`
+	Topic   string `mapstructure:"topic"`
 }
 
 func Init() (err error) {

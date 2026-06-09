@@ -9,46 +9,86 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// 声明结构体
+const (
+	tokenTypeAccess  = "access"
+	tokenTypeRefresh = "refresh"
+	RefreshTokenTTL  = 7 * 24 * time.Hour
+)
+
 type MyClaims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
+	UserID    int64  `json:"user_id"`
+	Username  string `json:"username"`
+	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
-func GenToken(userID int64, username string) (string, error) {
-	// 从配置文件动态计算过期时间
-	expireDuration := time.Duration(settings.Conf.Auth.JwtExpire) * time.Hour
-
-	c := MyClaims{
-		UserID:   userID,
-		Username: username,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expireDuration)),
-			Issuer:    "echo",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
-
-	// 从 settings 中读取秘钥，强制转换为 []byte
-	return token.SignedString([]byte(settings.Conf.Auth.JwtSecret))
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
-// ParseToken 验证并解析 Token
-func ParseToken(tokenString string) (*MyClaims, error) {
-	var mc = new(MyClaims)
-
-	token, err := jwt.ParseWithClaims(tokenString, mc, func(token *jwt.Token) (interface{}, error) {
-		// 解析时同样从 settings 中读取秘钥
-		return []byte(settings.Conf.Auth.JwtSecret), nil
-	})
-
+// GenTokenPair 生成 access token + refresh token 对
+func GenTokenPair(userID int64, username string) (*TokenPair, error) {
+	accessToken, err := genToken(userID, username, tokenTypeAccess,
+		time.Duration(settings.Conf.Auth.JwtExpire)*time.Hour)
 	if err != nil {
 		return nil, err
 	}
-	if token.Valid {
-		return mc, nil
+	refreshToken, err := genToken(userID, username, tokenTypeRefresh, RefreshTokenTTL)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errors.New("invalid token")
+	return &TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+}
+
+func genToken(userID int64, username, tokenType string, ttl time.Duration) (string, error) {
+	c := MyClaims{
+		UserID:    userID,
+		Username:  username,
+		TokenType: tokenType,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
+			Issuer:    "echo",
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
+	return token.SignedString([]byte(settings.Conf.Auth.JwtSecret))
+}
+
+// ParseToken 解析并校验 access token，拒绝 refresh token
+func ParseToken(tokenString string) (*MyClaims, error) {
+	mc, err := parseRawToken(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	if mc.TokenType != tokenTypeAccess {
+		return nil, errors.New("invalid token type")
+	}
+	return mc, nil
+}
+
+// ParseRefreshToken 解析并校验 refresh token，拒绝 access token
+func ParseRefreshToken(tokenString string) (*MyClaims, error) {
+	mc, err := parseRawToken(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	if mc.TokenType != tokenTypeRefresh {
+		return nil, errors.New("invalid token type")
+	}
+	return mc, nil
+}
+
+func parseRawToken(tokenString string) (*MyClaims, error) {
+	mc := new(MyClaims)
+	token, err := jwt.ParseWithClaims(tokenString, mc, func(token *jwt.Token) (interface{}, error) {
+		return []byte(settings.Conf.Auth.JwtSecret), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+	return mc, nil
 }

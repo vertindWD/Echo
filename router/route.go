@@ -26,6 +26,8 @@ func SetupRouter() *gin.Engine {
 	// 登录
 	v1.POST("/login/username", controller.LoginUsernameHandler)
 	v1.POST("/login/email", controller.LoginEmailHandler)
+	// 刷新 token（无需鉴权）
+	v1.POST("/refresh_token", controller.RefreshTokenHandler)
 
 	{
 		v1.GET("/community", controller.CommunityHandler)
@@ -37,6 +39,7 @@ func SetupRouter() *gin.Engine {
 	v1Auth.Use(middlewares.JWTAuthMiddleware())
 
 	{
+		v1Auth.POST("/logout", controller.LogoutHandler)
 		v1Auth.POST("/post", controller.CreatePostHandler)
 		v1Auth.GET("/post/:id", controller.GetPostDetailHandler)
 		v1Auth.POST("/post/vote", controller.PostVoteHandler)

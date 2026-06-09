@@ -35,3 +35,17 @@ func GetUserByEmail(email string) (*models.User, error) {
 	err := DB.Where("email = ?", email).First(&user).Error
 	return &user, err
 }
+
+// GetUsersByIDs 批量查询，返回 userID -> username 的映射
+func GetUsersByIDs(ids []int64) (map[int64]string, error) {
+	var users []models.User
+	err := DB.Select("user_id, username").Where("user_id IN (?)", ids).Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int64]string, len(users))
+	for _, u := range users {
+		result[u.UserID] = u.Username
+	}
+	return result, nil
+}

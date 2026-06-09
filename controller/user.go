@@ -19,23 +19,17 @@ import (
 // @Router /signup [post]
 func SignUpHandler(c *gin.Context) {
 	var p models.ParamSignUp
-
-	// 1. 参数校验
 	if err := c.ShouldBindJSON(&p); err != nil {
 		HandleValidatorError(c, err)
 		return
 	}
-
-	// 2. 业务处理
-	token, err := logic.SignUp(&p)
+	pair, err := logic.SignUp(&p)
 	if err != nil {
 		zap.L().Error("logic.SignUp failed", zap.Error(err))
 		ResponseError(c, CodeServerBusy)
 		return
 	}
-
-	// 3. 返回响应
-	ResponseSuccess(c, token)
+	ResponseSuccess(c, pair)
 }
 
 // LoginUsernameHandler 用户名登录接口
@@ -48,23 +42,18 @@ func SignUpHandler(c *gin.Context) {
 // @Success 200 {object} ResponseData "成功"
 // @Router /login/username [post]
 func LoginUsernameHandler(c *gin.Context) {
-	// 参数校验
 	var p models.ParamLoginUsername
 	if err := c.ShouldBindJSON(&p); err != nil {
 		HandleValidatorError(c, err)
 		return
 	}
-
-	// 业务处理
-	token, err := logic.LoginByUsername(&p)
+	pair, err := logic.LoginByUsername(&p)
 	if err != nil {
 		zap.L().Error("logic.LoginByUsername failed", zap.String("username", p.Username), zap.Error(err))
 		ResponseError(c, CodeServerBusy)
 		return
 	}
-
-	// 返回响应
-	ResponseSuccess(c, token)
+	ResponseSuccess(c, pair)
 }
 
 // LoginEmailHandler 邮箱登录接口
@@ -77,19 +66,65 @@ func LoginUsernameHandler(c *gin.Context) {
 // @Success 200 {object} ResponseData "成功"
 // @Router /login/email [post]
 func LoginEmailHandler(c *gin.Context) {
-	// 参数校验
 	var p models.ParamLoginEmail
 	if err := c.ShouldBindJSON(&p); err != nil {
 		HandleValidatorError(c, err)
 		return
 	}
-	// 业务处理
-	token, err := logic.LoginByEmail(&p)
+	pair, err := logic.LoginByEmail(&p)
 	if err != nil {
-		zap.L().Error("logic.LoginByUsername failed", zap.String("email", p.Email), zap.Error(err))
+		zap.L().Error("logic.LoginByEmail failed", zap.String("email", p.Email), zap.Error(err))
 		ResponseError(c, CodeServerBusy)
 		return
 	}
-	// 返回响应
-	ResponseSuccess(c, token)
+	ResponseSuccess(c, pair)
+}
+
+// RefreshTokenHandler 刷新 token 接口
+// @Summary 刷新 Token
+// @Description 用 refresh_token 换取新的 access_token 和 refresh_token（轮转）
+// @Tags 用户模块
+// @Accept application/json
+// @Produce application/json
+// @Param object body object true "refresh_token"
+// @Success 200 {object} ResponseData "成功"
+// @Router /refresh_token [post]
+func RefreshTokenHandler(c *gin.Context) {
+	var p struct {
+		RefreshToken string `json:"refresh_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&p); err != nil {
+		HandleValidatorError(c, err)
+		return
+	}
+	pair, err := logic.RefreshToken(p.RefreshToken)
+	if err != nil {
+		zap.L().Error("logic.RefreshToken failed", zap.Error(err))
+		ResponseError(c, CodeServerBusy)
+		return
+	}
+	ResponseSuccess(c, pair)
+}
+
+// LogoutHandler 登出接口
+// @Summary 登出
+// @Description 使当前用户的 refresh token 立即失效
+// @Tags 用户模块
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer 用户令牌"
+// @Success 200 {object} ResponseData "成功"
+// @Router /logout [post]
+func LogoutHandler(c *gin.Context) {
+	userID, err := GetCurrentUserID(c)
+	if err != nil {
+		ResponseError(c, CodeServerBusy)
+		return
+	}
+	if err := logic.Logout(userID); err != nil {
+		zap.L().Error("logic.Logout failed", zap.Error(err))
+		ResponseError(c, CodeServerBusy)
+		return
+	}
+	ResponseSuccess(c, nil)
 }

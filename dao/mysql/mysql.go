@@ -54,6 +54,12 @@ func Init(cfg *settings.MySQL) error {
 		return err
 	}
 
+	err = DB.AutoMigrate(&models.Vote{})
+	if err != nil {
+		zap.L().Error("Vote表自动建表失败", zap.Error(err))
+		return err
+	}
+
 	// 3. 提取底层原生 sql.DB 对象
 	sqlDB, err := DB.DB()
 	if err != nil {

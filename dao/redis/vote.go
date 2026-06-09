@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,40 +14,74 @@ const (
 	ScorePerVote     = 432
 )
 
+// voteScript 将读-算-写封装为一个原子操作，消除并发竞态
+//
+// KEYS[1] = KeyPostTimeZSet
+// KEYS[2] = KeyPostScoreZSet
+// KEYS[3] = KeyPostVotedZSetPrefix + postID
+// ARGV[1] = postID        (ZSet 中的 member)
+// ARGV[2] = userID        (voted ZSet 中的 member)
+// ARGV[3] = value         (新投票方向: 1 / 0 / -1)
+// ARGV[4] = 当前 Unix 时间戳
+// ARGV[5] = OneWeekInSeconds
+// ARGV[6] = ScorePerVote
+var voteScript = redis.NewScript(`
+local post_time = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not post_time then
+    return redis.error_reply('post not found')
+end
+
+local is_expired = (tonumber(ARGV[4]) - tonumber(post_time)) > tonumber(ARGV[5])
+local ov = tonumber(redis.call('ZSCORE', KEYS[3], ARGV[2])) or 0
+local value = tonumber(ARGV[3])
+
+local dir
+if value == ov then
+    dir = 0
+else
+    dir = value
+end
+
+if dir == ov then
+    return 0
+end
+
+local score_change = (dir - ov) * tonumber(ARGV[6])
+
+if not is_expired then
+    redis.call('ZINCRBY', KEYS[2], score_change, ARGV[1])
+end
+
+if dir == 0 then
+    redis.call('ZREM', KEYS[3], ARGV[2])
+else
+    redis.call('ZADD', KEYS[3], dir, ARGV[2])
+end
+
+return 1
+`)
+
 func VoteForPost(userID, postID string, value float64) error {
 	ctx := context.Background()
-	// 校验帖子时间
-	postTime, err := rdb.ZScore(ctx, KeyPostTimeZSet, postID).Result()
-	if err != nil {
-		return errors.New("帖子不存在")
+	keys := []string{
+		KeyPostTimeZSet,
+		KeyPostScoreZSet,
+		KeyPostVotedZSetPrefix + postID,
 	}
-	// 计算当前时间与帖子发布时间的差值
-	isExpired := float64(time.Now().Unix())-postTime > OneWeekInSeconds
-	ov := rdb.ZScore(ctx, KeyPostVotedZSetPrefix+postID, userID).Val()
-	var dir float64
-	if value == ov {
-		dir = 0
-	} else {
-		dir = value
-	}
-	if dir == ov {
+	err := voteScript.Run(ctx, rdb, keys,
+		postID,
+		userID,
+		value,
+		time.Now().Unix(),
+		OneWeekInSeconds,
+		ScorePerVote,
+	).Err()
+
+	if err == nil || err == redis.Nil {
 		return nil
 	}
-	scoreChange := (dir - ov) * ScorePerVote
-	pipeline := rdb.TxPipeline()
-	if !isExpired {
-		pipeline.ZIncrBy(ctx, KeyPostScoreZSet, scoreChange, postID)
+	if strings.Contains(err.Error(), "post not found") {
+		return errors.New("帖子不存在")
 	}
-	if dir == 0 {
-		// 如果是取消投票，从记录中移除
-		pipeline.ZRem(ctx, KeyPostVotedZSetPrefix+postID, userID)
-	} else {
-		// 如果是赞成(1)或反对(-1)，更新记录
-		pipeline.ZAdd(ctx, KeyPostVotedZSetPrefix+postID, redis.Z{
-			Score:  value,
-			Member: userID,
-		})
-	}
-	_, err = pipeline.Exec(ctx)
 	return err
 }
